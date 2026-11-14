@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f0d0a">
+<title>Pint Tracker · Beer garden sun map</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+:root{--bg:#faf6ec;--panel:#fffdf7;--ink:#2a2418;--mut:#7a6f58;--line:#e6dcc3;--gold:#a97a06;--goldbg:#e0b84a;--chip:#f1e9d2;--oncol:#1a1405;color-scheme:light;box-sizing:border-box}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f0d0a;--panel:#16130e;--ink:#f6efdd;--mut:#9a8f78;--line:#2a2419;--gold:#e0b84a;--chip:#1d1810;color-scheme:dark}}
+*{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,sans-serif}
+button,input{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:minmax(320px,430px) 1fr;height:100vh}
+.panel{padding:20px 18px 28px;overflow:auto}
+.map{position:relative;background:#0b0907}
+#map{position:absolute;inset:0}
+.maplibregl-canvas{filter:invert(1) hue-rotate(180deg) brightness(.9) saturate(.7)}
+.brand{font-size:12px;letter-spacing:.3em;color:var(--gold);font-weight:700}
+h1{font:700 30px/1.1 Fraunces,Georgia,serif;margin:16px 0 14px}
+.big{display:flex;gap:14px;align-items:center}
+.num{font:700 64px/1 Fraunces,Georgia,serif;color:var(--gold);min-width:70px;text-align:center}
+.mut{color:var(--mut)}.small{font-size:12px}
+.trow{display:flex;justify-content:space-between;align-items:center;margin-top:20px}
+.time{font:700 44px/1 Fraunces,Georgia,serif}
+.ctl{display:flex;gap:10px}
+.round{width:46px;height:46px;border-radius:50%;border:1px solid var(--line);background:none}
+.now{height:46px;padding:0 22px;border-radius:999px;border:0;background:var(--goldbg);color:var(--oncol);font-weight:700}
+input[type=range]{width:100%;accent-color:var(--goldbg);margin:16px 0 2px}
+.rs{display:flex;justify-content:space-between;font-size:13px;color:var(--mut)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 8px}
+.chips button,.chip{border:1px solid var(--line);background:var(--chip);border-radius:999px;padding:9px 16px}
+.chips .act{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip input{background:none;border:0;outline:0}
+.hd{font-size:12px;letter-spacing:.12em;font-weight:700;color:var(--mut);margin:22px 0 10px}
+.row{display:flex;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--panel);cursor:pointer}
+.row.sel{border-color:var(--goldbg)}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--line);flex:none}
+.row.on .dot{background:var(--goldbg);box-shadow:0 0 10px var(--goldbg)}
+.row b{display:block}.row span{font-size:13px;color:var(--mut)}
+.link{background:none;border:0;color:var(--gold);padding:0;text-decoration:underline}
+@media(max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:46vh 1fr}.map{order:-1}}
+</style></head>
+<body>
+<div class="app">
+<section class="panel">
+ <div class="brand">🍺 PINT TRACKER</div>
+ <h1>Beer garden sun map</h1>
+ <div class="big"><div class="num" id="n">0</div><div><b>beer gardens in the sun</b><div class="mut" id="of"></div></div></div>
+ <div class="trow">
+  <div><div class="time" id="t"></div><div class="mut" id="dl" style="margin-top:6px"></div><div class="mut" id="sl"></div></div>
+  <div class="ctl"><button class="round" id="play" aria-label="Play">▶</button><button class="now" id="now">Now</button></div>
+ </div>
+ <input type="range" id="r" step="1" aria-label="Time of day">
+ <div class="rs"><span id="sr"></span><span id="ss"></span></div>
+ <div class="chips"><button id="today">Today</button><button id="tom">Tomorrow</button><label class="chip"><input type="date" id="date"></label></div>
+ <p class="mut small" id="note"></p>
+ <div class="hd">BEER GARDENS ROUND CORK</div>
+ <div id="list"></div>
+ <p class="mut small">Gardens and buildings come from OpenStreetMap, clouds from Open-Meteo. Where a building has no height recorded, it is assumed to be 8 m. Each garden is placed at its pub, and the pub’s own building is ignored. <button class="link" id="rb">Rebuild data</button></p>
+</section>
+<section class="map"><div id="map"></div></section>
+</div>
+<script>
+const R=Math.PI/180,C={lat:51.8985,lng:-8.4756},BB="51.80,-8.62,51.96,-8.33",$=i=>document.getElementById(i),p2=n=>String(n).padStart(2,"0"),hm=i=>p2(i/60|0)+":"+p2(i%60);
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let G=[],wx={},busy="",ready=false;
+const st={min:720,sun:[],rise:0,set:1439,sel:-1,tm:null};
+function dst(y,m,d){const L=o=>{const t=new Date(Date.UTC(y,o+1,0));return t.getUTCDate()-t.getUTCDay()};const t=Date.UTC(y,m,d,12);return t>=Date.UTC(y,2,L(2),1)&&t<Date.UTC(y,9,L(9),1)?1:0}
+function sunPos(ms){const d=ms/864e5-.5+2440588-2451545,M=R*(357.5291+.98560028*d),L=M+R*(1.9148*Math.sin(M)+.02*Math.sin(2*M)+3e-4*Math.sin(3*M))+R*102.9372+Math.PI,e=R*23.4397,dec=Math.asin(Math.sin(L)*Math.sin(e)),ra=Math.atan2(Math.sin(L)*Math.cos(e),Math.cos(L)),H=R*(280.16+360.9856235*d)+R*C.lng-ra,p=R*C.lat;
+return{alt:Math.asin(Math.sin(p)*Math.sin(dec)+Math.cos(p)*Math.cos(dec)*Math.cos(H))/R,az:((Math.atan2(Math.sin(H),Math.cos(H)*Math.sin(p)-Math.tan(dec)*Math.cos(p))+Math.PI)/R+360)%360}}
+const lit=(g,i)=>{const s=st.sun[i];return s.alt>0&&s.alt>g.sky[Math.floor(s.az/5)%72]};
+function nowD(){const t=new Date(),off=dst(t.getUTCFullYear(),t.getUTCMonth(),t.getUTCDate()),l=new Date(t.getTime()+off*36e5);return{y:l.getUTCFullYear(),m:l.getUTCMonth()+1,d:l.getUTCDate(),min:l.getUTCHours()*60+l.getUTCMinutes()}}
+const iso=(y,m,d)=>new Date(Date.UTC(y,m-1,d)).toISOString().slice(0,10);
+function calc(){const[y,m,d]=$("date").value.split("-").map(Number),base=Date.UTC(y,m-1,d)-dst(y,m-1,d)*36e5;st.sun=[];for(let i=0;i<1440;i++)st.sun.push(sunPos(base+i*6e4));
+st.rise=st.sun.findIndex(s=>s.alt>0);st.set=1439-st.sun.slice().reverse().findIndex(s=>s.alt>0);
+const r=$("r");r.min=st.rise;r.max=st.set;$("sr").textContent="Sunrise "+hm(st.rise);$("ss").textContent="Sunset "+hm(st.set)}
+function setDay(y,m,d){$("date").value=iso(y,m,d);calc();st.min=Math.min(Math.max(st.min,st.rise),st.set);sync()}
+function goNow(){const n=nowD();setDay(n.y,n.m,n.d);if(n.min>st.set){setDay(n.y,n.m,n.d+1);st.min=720;sync();$("note").textContent="The sun’s down now, so this shows tomorrow at midday."}else{st.min=Math.max(n.min,st.rise);sync()}}
+const dir=a=>["north","north-east","east","south-east","south","south-west","west","north-west"][Math.round(a/45)%8];
+function status(g){let j=st.min;if(lit(g,j)){while(j<1439&&lit(g,j+1))j++;return"Sun until "+hm(j+1)}
+while(j<1439&&!lit(g,j))j++;return lit(g,j)?"Sun from "+hm(j):"No more sun today"}
+function cloud(){const v=wx[$("date").value+"T"+p2(st.min/60|0)+":00"];return v==null?"No cloud forecast this far ahead":"Cloud cover "+v+"%"+(v>=85?" · sun unlikely":"")}
+function render(){const i=st.min,s=st.sun[i],on=G.map(g=>lit(g,i)),[y,m,d]=$("date").value.split("-").map(Number),n=nowD();
+$("n").textContent=on.filter(Boolean).length;$("of").textContent="round Cork · "+G.length+" in all";$("t").textContent=hm(i);$("r").value=i;
+$("dl").textContent=new Date(Date.UTC(y,m-1,d)).toLocaleDateString("en-IE",{weekday:"short",day:"numeric",month:"short",timeZone:"UTC"});
+$("sl").textContent=s.alt>0?`sun ${Math.round(s.alt)}° up in the ${dir(s.az)}`:"sun is down";
+$("today").className=$("date").value===iso(n.y,n.m,n.d)?"act":"";$("tom").className=$("date").value===iso(n.y,n.m,n.d+1)?"act":"";
+if(busy)$("note").textContent=busy;else if(!/^The sun/.test($("note").textContent)||wx)$("note").textContent=cloud();
+$("list").innerHTML=G.map((g,k)=>k).sort((a,b)=>on[b]-on[a]||a-b).map(k=>`<div class="row ${on[k]?"on":""} ${k===st.sel?"sel":""}" data-k="${k}"><i class="dot"></i><div><b>${esc(G[k].n)}</b><span>${status(G[k])}</span></div></div>`).join("")}
+const fc=()=>({type:"FeatureCollection",features:G.map((g,k)=>({type:"Feature",geometry:{type:"Point",coordinates:[g.lng,g.lat]},properties:{l:lit(g,st.min)?1:0,s:k===st.sel?1:0,k}}))});
+function sync(){render();if(ready)map.getSource("g").setData(fc())}
+// ---- data: gardens + buildings from OpenStreetMap, shade skyline per garden
+async function ovp(q){for(const u of["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"]){try{const r=await fetch(u,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"data="+encodeURIComponent(q)});if(r.ok)return(await r.json()).elements}catch(e){}}throw Error("OpenStreetMap server busy")}
+const inside=p=>{let c=false;for(let i=0,j=p.length-1;i<p.length;j=i++)if((p[i][1]>0)!=(p[j][1]>0)&&0<(p[j][0]-p[i][0])*(0-p[i][1])/(p[j][1]-p[i][1])+p[i][0])c=!c;return c};
+async function build(){
+ busy="Finding beer gardens…";render();
+ const els=await ovp(`[out:json][timeout:90];(nwr["amenity"="biergarten"](${BB});nwr["amenity"="pub"]["outdoor_seating"="yes"](${BB});nwr["amenity"="pub"]["beer_garden"="yes"](${BB}););out center tags;`),seen=new Set(),list=[];
+ els.forEach(e=>{const t=e.tags||{},la=e.lat??(e.center&&e.center.lat),lo=e.lon??(e.center&&e.center.lon),id=e.type+e.id;if(!t.name||la==null||seen.has(id))return;seen.add(id);list.push({n:t.name,lat:la,lng:lo})});
+ list.splice(150);if(!list.length)throw Error("no gardens found");
+ busy=`Found ${list.length}. Loading buildings…`;render();
+ const bs=await ovp("[out:json][timeout:120];("+list.map(g=>`way["building"](around:120,${g.lat},${g.lng});`).join("")+");out geom tags;"),B=[],ids=new Set();
+ bs.forEach(b=>{if(!b.geometry||ids.has(b.id))return;ids.add(b.id);const t=b.tags||{};let h=parseFloat(t.height);if(isNaN(h)){const l=parseFloat(t["building:levels"]);h=isNaN(l)?8:l*3+1}B.push({h,g:b.geometry})});
+ for(let gi=0;gi<list.length;gi++){const g=list[gi],k=Math.cos(g.lat*R)*111320,E=[],sky=[];
+  if(gi%5==0){busy=`Working out shade… ${gi}/${list.length}`;render();await new Promise(r=>setTimeout(r))}
+  B.forEach(b=>{const p=b.g.map(q=>[(q.lon-g.lng)*k,(q.lat-g.lat)*110540]);if(Math.hypot(p[0][0],p[0][1])>160||inside(p))return;for(let i=0;i<p.length-1;i++)E.push([p[i],p[i+1],b.h])});
+  for(let a=0;a<72;a++){const th=(a*5+2.5)*R,rx=Math.sin(th),ry=Math.cos(th);let m=0;
+   E.forEach(([P,Q,h])=>{const sx=Q[0]-P[0],sy=Q[1]-P[1],den=rx*sy-ry*sx;if(Math.abs(den)<1e-9)return;const t=(P[0]*sy-P[1]*sx)/den,u=(P[0]*ry-P[1]*rx)/den;if(t>1&&u>=0&&u<=1){const e=Math.atan(h/t)/R;if(e>m)m=e}});sky.push(Math.round(m*10)/10)}
+  g.sky=sky}
+ G=list;try{localStorage.setItem("pt1",JSON.stringify({t:Date.now(),G}))}catch(e){}
+ busy="";sync()}
+async function weather(){try{const r=await(await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${C.lat}&longitude=${C.lng}&hourly=cloud_cover&timezone=Europe%2FDublin&forecast_days=16`)).json();r.hourly.time.forEach((t,i)=>wx[t]=r.hourly.cloud_cover[i])}catch(e){}render()}
+// ---- map
+const map=new maplibregl.Map({container:"map",style:"https://tiles.openfreemap.org/styles/liberty",center:[C.lng,C.lat],zoom:13.6,pitch:55,bearing:-20});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}));
+function pick(k){st.sel=k;sync();if(k>=0)map.flyTo({center:[G[k].lng,G[k].lat],zoom:16.5,pitch:60})}
+map.on("load",()=>{map.addSource("g",{type:"geojson",data:fc()});
+ map.addLayer({id:"glow",type:"circle",source:"g",filter:["==",["get","l"],1],paint:{"circle-radius":16,"circle-color":"#ffc84a","circle-opacity":.45,"circle-blur":.8}});
+ map.addLayer({id:"dot",type:"circle",source:"g",paint:{"circle-radius":5,"circle-color":["case",["==",["get","l"],1],"#ffe08a","#8a8068"],"circle-stroke-width":1,"circle-stroke-color":"#0b0907"}});
+ map.addLayer({id:"sel",type:"circle",source:"g",filter:["==",["get","s"],1],paint:{"circle-radius":11,"circle-color":"rgba(0,0,0,0)","circle-stroke-width":2,"circle-stroke-color":"#fff"}});
+ map.on("click","dot",e=>pick(e.features[0].properties.k));
+ map.on("mouseenter","dot",()=>map.getCanvas().style.cursor="pointer");map.on("mouseleave","dot",()=>map.getCanvas().style.cursor="");
+ ready=true;sync()});
+// ---- controls
+$("r").oninput=e=>{st.min=+e.target.value;sync()};
+$("now").onclick=goNow;
+$("today").onclick=()=>{const n=nowD();setDay(n.y,n.m,n.d)};
+$("tom").onclick=()=>{const n=nowD();setDay(n.y,n.m,n.d+1)};
+$("date").onchange=e=>{if(e.target.value){const[y,m,d]=e.target.value.split("-").map(Number);setDay(y,m,d)}};
+$("play").onclick=()=>{if(st.tm){clearInterval(st.tm);st.tm=null;$("play").textContent="▶";return}$("play").textContent="❚❚";st.tm=setInterval(()=>{st.min=st.min>=st.set?st.rise:st.min+4;sync()},120)};
+$("list").onclick=e=>{const r=e.target.closest(".row");if(r)pick(+r.dataset.k)};
+const load=async()=>{try{await build()}catch(e){busy="Couldn’t load data: "+e.message+". Tap Rebuild data to try again.";render()}};
+$("rb").onclick=()=>{try{localStorage.removeItem("pt1")}catch(e){}load()};
+goNow();weather();
+let c=null;try{c=JSON.parse(localStorage.getItem("pt1"))}catch(e){}
+if(c&&c.G&&Date.now()-c.t<2592e6){G=c.G;sync()}else load();
+</script></body></html>
